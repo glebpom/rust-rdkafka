@@ -4,7 +4,8 @@ extern crate futures;
 extern crate rand;
 extern crate rdkafka;
 
-use futures::*;
+use futures::StreamExt;
+use futures::executor::{block_on, block_on_stream};
 
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{Consumer, StreamConsumer};
@@ -33,9 +34,9 @@ fn test_metadata() {
     let _r = env_logger::try_init();
 
     let topic_name = rand_test_topic();
-    populate_topic(&topic_name, 1, &value_fn, &key_fn, Some(0), None);
-    populate_topic(&topic_name, 1, &value_fn, &key_fn, Some(1), None);
-    populate_topic(&topic_name, 1, &value_fn, &key_fn, Some(2), None);
+    block_on(populate_topic(&topic_name, 1, &value_fn, &key_fn, Some(0), None));
+    block_on(populate_topic(&topic_name, 1, &value_fn, &key_fn, Some(1), None));
+    block_on(populate_topic(&topic_name, 1, &value_fn, &key_fn, Some(2), None));
     let consumer = create_consumer(&rand_test_group());
 
     let metadata = consumer
@@ -94,11 +95,11 @@ fn test_subscription() {
     let _r = env_logger::try_init();
 
     let topic_name = rand_test_topic();
-    populate_topic(&topic_name, 10, &value_fn, &key_fn, None, None);
+    block_on(populate_topic(&topic_name, 10, &value_fn, &key_fn, None, None));
     let consumer = create_consumer(&rand_test_group());
     consumer.subscribe(&[topic_name.as_str()]).unwrap();
 
-    let _consumer_future = consumer.start().take(10).wait();
+    let _consumer_future = block_on_stream(consumer.start()).take(10);
 
     let mut tpl = TopicPartitionList::new();
     tpl.add_topic_unassigned(&topic_name);
@@ -111,14 +112,14 @@ fn test_group_membership() {
 
     let topic_name = rand_test_topic();
     let group_name = rand_test_group();
-    populate_topic(&topic_name, 1, &value_fn, &key_fn, Some(0), None);
-    populate_topic(&topic_name, 1, &value_fn, &key_fn, Some(1), None);
-    populate_topic(&topic_name, 1, &value_fn, &key_fn, Some(2), None);
+    block_on(populate_topic(&topic_name, 1, &value_fn, &key_fn, Some(0), None));
+    block_on(populate_topic(&topic_name, 1, &value_fn, &key_fn, Some(1), None));
+    block_on(populate_topic(&topic_name, 1, &value_fn, &key_fn, Some(2), None));
     let consumer = create_consumer(&group_name);
     consumer.subscribe(&[topic_name.as_str()]).unwrap();
 
     // Make sure the consumer joins the group
-    let _consumer_future = consumer.start().take(1).for_each(|_| Ok(())).wait();
+    let _ = block_on_stream(consumer.start().take(1)).collect::<Vec<_>>();
 
     let group_list = consumer
         .fetch_group_list(None, Duration::from_secs(5))

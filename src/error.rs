@@ -78,17 +78,11 @@ impl fmt::Debug for KafkaError {
                 write!(f, "KafkaError (Admin operation creation error: {})", err)
             }
             KafkaError::Canceled => write!(f, "KafkaError (Client dropped)"),
-            KafkaError::ClientConfig(_, ref desc, ref key, ref value) => write!(
-                f,
-                "KafkaError (Client config error: {} {} {})",
-                desc, key, value
-            ),
-            KafkaError::ClientCreation(ref err) => {
-                write!(f, "KafkaError (Client creation error: {})", err)
+            KafkaError::ClientConfig(_, ref desc, ref key, ref value) => {
+                write!(f, "KafkaError (Client config error: {} {} {})", desc, key, value)
             }
-            KafkaError::ConsumerCommit(err) => {
-                write!(f, "KafkaError (Consumer commit error: {})", err)
-            }
+            KafkaError::ClientCreation(ref err) => write!(f, "KafkaError (Client creation error: {})", err),
+            KafkaError::ConsumerCommit(err) => write!(f, "KafkaError (Consumer commit error: {})", err),
             KafkaError::Global(err) => write!(f, "KafkaError (Global error: {})", err),
             KafkaError::GroupListFetch(err) => {
                 write!(f, "KafkaError (Group list fetch error: {})", err)

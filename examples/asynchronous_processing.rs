@@ -7,7 +7,8 @@ extern crate rdkafka;
 extern crate tokio;
 
 use clap::{App, Arg};
-use futures::{lazy, Future, Stream};
+use futures::{FutureExt, StreamExt};
+use futures::future::{lazy, ready};
 use tokio::runtime::current_thread;
 
 use rdkafka::config::ClientConfig;
@@ -70,7 +71,7 @@ fn run_async_processor(brokers: &str, group_id: &str, input_topic: &str, output_
         .expect("Producer creation error");
 
     // Create the runtime where the expensive computation will be performed.
-    let mut thread_pool = tokio::runtime::Builder::new()
+    let thread_pool = tokio::runtime::Builder::new()
         .name_prefix("pool-")
         .core_threads(4)
         .build()
@@ -81,20 +82,16 @@ fn run_async_processor(brokers: &str, group_id: &str, input_topic: &str, output_
     let io_thread_handle = io_thread.handle();
 
     // Create the outer pipeline on the message stream.
-    let stream_processor = consumer
-        .start()
-        .filter_map(|result| {
-            // Filter out errors
-            match result {
+    let stream_processor = consumer.start()
+        .filter_map(|result| {  // Filter out errors
+            ready(match result {
                 Ok(msg) => Some(msg),
                 Err(kafka_error) => {
                     warn!("Error while receiving from Kafka: {:?}", kafka_error);
                     None
                 }
-            }
-        })
-        .for_each(move |borrowed_message| {
-            // Process each message
+            })
+        }).for_each(move |borrowed_message| {     // Process each message
             info!("Message received: {}", borrowed_message.offset());
             // Borrowed messages can't outlive the consumer they are received from, so they need to
             // be owned in order to be sent to a separate thread.
@@ -102,29 +99,25 @@ fn run_async_processor(brokers: &str, group_id: &str, input_topic: &str, output_
             let output_topic = output_topic.to_string();
             let producer = producer.clone();
             let io_thread_handle = io_thread_handle.clone();
-            let message_future = lazy(move || {
+            let message_future = lazy(move |_| {
                 // The body of this closure will be executed in the thread pool.
                 let computation_result = expensive_computation(owned_message);
-                let producer_future = producer
-                    .send(
-                        FutureRecord::to(&output_topic)
-                            .key("some key")
-                            .payload(&computation_result),
-                        0,
-                    )
-                    .then(|result| {
+                let producer_future = producer.send(
+                    FutureRecord::to(&output_topic)
+                        .key("some key")
+                        .payload(&computation_result),
+                    0).then(|result| {
                         match result {
-                            Ok(Ok(delivery)) => println!("Sent: {:?}", delivery),
-                            Ok(Err((e, _))) => println!("Error: {:?}", e),
-                            Err(_) => println!("Future cancelled"),
+                            Ok(delivery) => println!("Sent: {:?}", delivery),
+                            Err(e) => println!("Error: {:?}", e),
                         }
-                        Ok(())
+                        ready(())
                     });
                 let _ = io_thread_handle.spawn(producer_future);
-                Ok(())
+                ()
             });
             thread_pool.spawn(message_future);
-            Ok(())
+            ready(())
         });
 
     info!("Starting event loop");

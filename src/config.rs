@@ -156,12 +156,7 @@ impl ClientConfig {
                 )
             };
             if ret.is_error() {
-                return Err(KafkaError::ClientConfig(
-                    ret,
-                    err_buf.to_string(),
-                    key.to_string(),
-                    value.to_string(),
-                ));
+                return Err(KafkaError::ClientConfig(ret, err_buf.to_string(), key.to_string(), value.to_string()));
             }
         }
         Ok(unsafe { NativeClientConfig::from_ptr(conf) })

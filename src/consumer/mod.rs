@@ -16,6 +16,7 @@ use crate::message::BorrowedMessage;
 use crate::metadata::Metadata;
 use crate::util::cstr_to_owned;
 
+use log::*;
 use std::ptr;
 use std::time::Duration;
 

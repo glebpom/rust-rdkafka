@@ -20,12 +20,12 @@
 
 use crate::rdsys;
 use crate::rdsys::types::*;
-use log::Level;
 
 use crate::client::ClientContext;
 use crate::error::{IsError, KafkaError, KafkaResult};
 use crate::util::ErrBuf;
 
+use log::*;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::mem;

@@ -12,6 +12,7 @@ use crate::error::{KafkaError, KafkaResult};
 use crate::message::BorrowedMessage;
 use crate::util::duration_to_millis;
 
+use log::*;
 use std::pin::Pin;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};

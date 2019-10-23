@@ -13,6 +13,7 @@ use crate::topic_partition_list::Offset::Offset;
 use crate::topic_partition_list::TopicPartitionList;
 use crate::util::{cstr_to_owned, timeout_to_ms};
 
+use log::*;
 use std::mem;
 use std::os::raw::c_void;
 use std::ptr;

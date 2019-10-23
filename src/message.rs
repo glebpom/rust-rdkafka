@@ -2,6 +2,7 @@
 use crate::rdsys;
 use crate::rdsys::types::*;
 
+use log::*;
 use std::ffi::{CStr, CString};
 use std::fmt;
 use std::marker::PhantomData;

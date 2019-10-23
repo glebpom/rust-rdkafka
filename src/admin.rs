@@ -14,7 +14,7 @@ use crate::util::{cstr_to_owned, timeout_to_ms, AsCArray, ErrBuf, IntoOpaque, Wr
 
 use futures::channel::oneshot::{Canceled, Receiver, Sender, channel};
 use futures::future::{self, Either, Future, FutureExt};
-
+use log::*;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::mem;

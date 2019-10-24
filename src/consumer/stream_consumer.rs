@@ -1,116 +1,13 @@
 //! Stream-based consumer implementation.
-use crate::rdsys;
-use crate::rdsys::types::*;
-use futures::channel::mpsc;
-use futures::{Poll, SinkExt, Stream, StreamExt};
-
 use crate::config::{ClientConfig, FromClientConfig, FromClientConfigAndContext};
 use crate::consumer::base_consumer::BaseConsumer;
-use crate::consumer::{Consumer, ConsumerContext, DefaultConsumerContext};
-use crate::error::{KafkaError, KafkaResult};
-use crate::message::BorrowedMessage;
-use crate::util::duration_to_millis;
+use crate::consumer::{Consumer, ConsumerContext, DefaultConsumerContext, MessageStream};
+use crate::error::KafkaResult;
 
 use log::*;
-use pin_project::pin_project;
-use std::pin::Pin;
-use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::task::Context;
-use std::thread::{self, JoinHandle};
+use std::sync::Arc;
 use std::time::Duration;
-use tokio_executor::blocking::{run as block_on};
-
-
-enum MessageStreamState {
-    Ready,
-    Polling()
-}
-
-/// A Kafka consumer implementing Stream.
-///
-/// It can be used to receive messages as they are consumed from Kafka. Note: there might be
-/// buffering between the actual Kafka consumer and the receiving end of this stream, so it is not
-/// advised to use automatic commit, as some messages might have been consumed by the internal Kafka
-/// consumer but not processed. Manual offset storing should be used, see the `store_offset`
-/// function on `Consumer`.
-#[pin_project]
-pub struct MessageStream<'a, C: ConsumerContext + 'static> {
-    consumer: &'a StreamConsumer<C>,
-    #[pin]
-    receiver: mpsc::Receiver<Option<PolledMessagePtr>>,
-}
-
-impl<'a, C: ConsumerContext + 'static> MessageStream<'a, C> {
-    fn new(
-        consumer: &'a StreamConsumer<C>,
-        receiver: mpsc::Receiver<Option<PolledMessagePtr>>,
-    ) -> MessageStream<'a, C> {
-        MessageStream { consumer, receiver }
-    }
-}
-
-impl<'a, C: ConsumerContext + 'a> Stream for MessageStream<'a, C> {
-    type Item = KafkaResult<BorrowedMessage<'a>>;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        let this = self.project();
-        let ready = futures::ready!(this.receiver.poll_next(cx));
-        ready.map(|polled_ptr_opt: Option<PolledMessagePtr>| {
-            polled_ptr_opt.map_or(
-                Err(KafkaError::NoMessageReceived),
-                |polled_ptr: PolledMessagePtr| polled_ptr.into_message_of(self.consumer),
-            )
-        })
-    }
-}
-
-enum PollLoopResult<'a> {
-    Continue,
-    Sent(futures::sink::Send<'a, mpsc::Sender<Option<PolledMessagePtr>>, Option<PolledMessagePtr>>),
-}
-/// Internal consumer loop. This is the main body of the thread that will drive the stream consumer.
-/// If `send_none` is true, the loop will send a None into the sender every time the poll times out.
-async fn poll_loop<C: ConsumerContext + 'static>(
-    consumer: Arc<BaseConsumer<C>>,
-    sender: mpsc::Sender<Option<PolledMessagePtr>>,
-    should_stop: &AtomicBool,
-    poll_interval: Duration,
-    send_none: bool,
-) {
-    trace!("Polling thread loop started");
-    let mut curr_sender = sender;
-    let poll_interval_ms = duration_to_millis(poll_interval) as i32;
-    while !should_stop.load(Ordering::Relaxed) {
-        trace!("Polling base consumer");
-        let poll_consumer = Arc::clone(&consumer);
-        let future_send_future = block_on(move || {
-            match poll_consumer.poll_raw(poll_interval_ms) {
-                None => {
-                    if send_none {
-                        PollLoopResult::Sent(curr_sender.send(None))
-                    } else {
-                        PollLoopResult::Continue
-                    }
-                }
-                Some(m_ptr) => {
-                    PollLoopResult::Sent(curr_sender.send(Some(PolledMessagePtr::new(m_ptr))))
-                },
-            }
-        });
-        if let PollLoopResult::Sent(f) = future_send_future.await {
-            match f.await {
-                Ok(_) => {},
-                Err(e) => {
-                    debug!("Sender not available: {:?}", e);
-                    break;
-                }
-            }
-        }
-    }
-    trace!("Polling thread loop terminated");
-}
 
 /// A Kafka Consumer providing a `futures::Stream` interface.
 ///
@@ -121,8 +18,8 @@ async fn poll_loop<C: ConsumerContext + 'static>(
 /// `Consumer`.
 #[must_use = "Consumer polling thread will stop immediately if unused"]
 pub struct StreamConsumer<C: ConsumerContext + 'static = DefaultConsumerContext> {
-    consumer: Arc<BaseConsumer<C>>,
-    should_stop: Arc<AtomicBool>,
+    pub (crate) consumer: Arc<BaseConsumer<C>>,
+    pub (crate) should_stop: Arc<AtomicBool>,
 }
 
 impl<C: ConsumerContext> Consumer<C> for StreamConsumer<C> {
@@ -152,6 +49,12 @@ impl<C: ConsumerContext> FromClientConfigAndContext<C> for StreamConsumer<C> {
 }
 
 impl<C: ConsumerContext> StreamConsumer<C> {
+    /// Polls the consumer for messages and returns a pointer to the native rdkafka-sys struct.
+    /// This method is for internal use only. Use poll instead.
+    pub(crate) fn poll_raw(&self, timeout_ms: i32) -> Option<*mut rdkafka_sys::RDKafkaMessage> {
+        self.consumer.poll_raw(timeout_ms)
+    }
+
     /// Starts the StreamConsumer with default configuration (100ms polling interval and no
     /// `NoMessageReceived` notifications).
     pub fn start(&self) -> MessageStream<C> {
@@ -163,20 +66,12 @@ impl<C: ConsumerContext> StreamConsumer<C> {
     /// `KafkaError::NoMessageReceived` every time the poll interval is reached and no message has
     /// been received.
     pub fn start_with(&self, poll_interval: Duration, no_message_error: bool) -> MessageStream<C> {
-        MessageStream::new(self, poll_interval, no_message_error)
+        MessageStream::new(&self, Arc::clone(&self.should_stop), poll_interval, no_message_error)
     }
 
-    /// Stops the StreamConsumer, blocking the caller until the internal consumer has been stopped.
+    /// Stops the StreamConsumer
     pub fn stop(&self) {
-        let mut handle = self.handle.lock().unwrap();
-        if let Some(handle) = handle.take() {
-            trace!("Stopping polling");
-            self.should_stop.store(true, Ordering::Relaxed);
-            match handle.join() {
-                Ok(()) => trace!("Polling stopped"),
-                Err(e) => warn!("Failure while terminating thread: {:?}", e),
-            };
-        }
+        self.should_stop.store(true, Ordering::Relaxed);
     }
 }
 
@@ -188,5 +83,3 @@ impl<C: ConsumerContext> Drop for StreamConsumer<C> {
         self.stop();
     }
 }
-
-impl<C: ConsumerContext>

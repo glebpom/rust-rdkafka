@@ -1,26 +1,21 @@
 use crate::rdsys;
 use crate::rdsys::types::*;
-use futures::channel::mpsc;
-use futures::{Poll, SinkExt, Stream, StreamExt};
+use futures::Stream;
 
-use crate::config::{ClientConfig, FromClientConfig, FromClientConfigAndContext};
-use crate::consumer::base_consumer::BaseConsumer;
-use crate::consumer::{Consumer, ConsumerContext, DefaultConsumerContext};
+use crate::consumer::{ConsumerContext, StreamConsumer};
 use crate::error::{KafkaError, KafkaResult};
 use crate::message::BorrowedMessage;
 use crate::util::duration_to_millis;
 
 use log::*;
 use pin_project::pin_project;
-use std::future::Future;
 use std::pin::Pin;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::thread::{self, JoinHandle};
 use std::time::Duration;
-use tokio_executor::blocking::{run as block_on};
+use tokio_executor::blocking::{run as block_on, Blocking};
 
 /// A small wrapper for a message pointer. This wrapper is only used to
 /// pass a message between the polling thread and the thread consuming the stream,
@@ -67,12 +62,90 @@ impl Drop for PolledMessagePtr {
 /// Allow message pointer to be moved across threads.
 unsafe impl Send for PolledMessagePtr {}
 
-
+// A Kafka consumer implementing Stream.
+///
+/// It can be used to receive messages as they are consumed from Kafka. Note: there might be
+/// buffering between the actual Kafka consumer and the receiving end of this stream, so it is not
+/// advised to use automatic commit, as some messages might have been consumed by the internal Kafka
+/// consumer but not processed. Manual offset storing should be used, see the `store_offset`
+/// function on `Consumer`.
 #[pin_project]
-pub struct MessageFuture {
-    pending: Option<Pin<Box<dyn Future<Output=Result<PolledMessagePtr, Error>>>>>;
+pub struct MessageStream<'a, C: ConsumerContext + 'static> {
+    consumer: Arc<StreamConsumer<C>>,
+    should_stop: Arc<AtomicBool>,
+    poll_interval_ms: i32,
+    send_none: bool,
+    #[pin]
+    pending: Option<Blocking<PollConsumerResult>>,
+    phantom: &'a std::marker::PhantomData<C>,
 }
 
-impl Future for MessageFuture {
+enum PollConsumerResult {
+    Continue,
+    Ready(Option<PolledMessagePtr>),
+}
 
+impl<'a, C: ConsumerContext + 'static> MessageStream<'a, C> {
+    fn poll_consumer(&self) -> Blocking<PollConsumerResult> {
+        let consumer = Arc::clone(&self.consumer);
+        block_on(move || {
+            match self.consumer.poll_raw(self.poll_interval_ms) {
+                None => {
+                    if self.send_none {
+                        PollConsumerResult::Ready(None)
+                    } else {
+                        PollConsumerResult::Continue
+                    }
+                }
+                Some(m_ptr) => {
+                    PollConsumerResult::Ready(Some(PolledMessagePtr::new(m_ptr)))
+                },
+            }
+        })
+    }
+}
+
+impl<'a, C: ConsumerContext + 'static> MessageStream<'a, C> {
+    pub fn new(
+        consumer: Arc<StreamConsumer<C>>,
+        should_stop: Arc<AtomicBool>,
+        poll_interval: Duration,
+        send_none: bool,
+    ) -> Self {
+        let poll_interval_ms = duration_to_millis(poll_interval) as i32;
+        Self {
+            consumer: consumer,
+            should_stop: should_stop,
+            poll_interval_ms: poll_interval_ms,
+            send_none: send_none,
+            pending: None,
+            phantom: &std::marker::PhantomData,
+        }
+    }
+}
+
+impl<'a, C: ConsumerContext + 'a> Stream for MessageStream<'a, C> {
+    type Item = KafkaResult<BorrowedMessage<'a>>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        let this = self.project();
+        loop {
+            if this.should_stop.load(Ordering::Relaxed) {
+                return Poll::Ready(None);
+            } else {
+                match this.pending {
+                    Some(to_poll) => {
+                        let res = futures::ready!(to_poll.poll(cx));
+                        res.map_or(
+                            Err(KafkaError::NoMessageReceived),
+                            |polled_ptr: PolledMessagePtr| polled_ptr.into_message_of(self.consumer),
+                        )
+                    }
+                    None => {
+                        *this.pending = Some(self.poll_consumer());
+                    }
+                }
+            }
+        }
+    }
 }

@@ -1,12 +1,4 @@
-#[macro_use]
-extern crate log;
-extern crate clap;
-extern crate futures;
-extern crate rdkafka;
-extern crate rdkafka_sys;
-
 use clap::{App, Arg};
-use futures::executor::block_on_stream;
 
 use rdkafka::client::ClientContext;
 use rdkafka::config::{ClientConfig, RDKafkaLogLevel};

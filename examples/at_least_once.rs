@@ -11,17 +11,10 @@
 /// For a simpler example of consumers and producers, check the `simple_consumer` and
 /// `simple_producer` files in the example folder.
 ///
-#[macro_use]
-extern crate log;
-extern crate clap;
-extern crate futures;
-extern crate rdkafka;
-extern crate rdkafka_sys;
-
 use clap::{App, Arg};
-use futures::executor::{block_on, block_on_stream};
 use futures::future::join_all;
-use futures::stream::Stream;
+use log::*;
+use tokio_executor::blocking::{run as block_on};
 
 use rdkafka::client::ClientContext;
 use rdkafka::config::{ClientConfig, RDKafkaLogLevel};
@@ -34,6 +27,7 @@ use rdkafka::Message;
 
 mod example_utils;
 use crate::example_utils::setup_logger;
+use futures::StreamExt;
 
 // A simple context to customize the consumer behavior and print a log line every time
 // offsets are committed
@@ -148,7 +142,7 @@ fn main() {
     let consumer = create_consumer(brokers, group_id, input_topic);
     let producer = create_producer(brokers);
 
-    for message in block_on_stream(consumer.start()) {
+    for message in consumer.start().next().await {
         match message {
             Err(e) => {
                 warn!("Kafka error: {}", e);

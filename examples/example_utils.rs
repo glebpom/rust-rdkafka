@@ -1,7 +1,3 @@
-extern crate chrono;
-extern crate env_logger;
-extern crate log;
-
 use self::chrono::prelude::*;
 
 use self::env_logger::fmt::Formatter;

@@ -1,12 +1,5 @@
-#[macro_use]
-extern crate log;
-extern crate clap;
-extern crate futures;
-extern crate rdkafka;
-
 use clap::{App, Arg};
 use futures::*;
-use futures::executor::block_on;
 
 use rdkafka::config::ClientConfig;
 use rdkafka::producer::{FutureProducer, FutureRecord};

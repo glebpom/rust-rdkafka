@@ -1,9 +1,3 @@
-#[macro_use]
-extern crate log;
-#[macro_use]
-extern crate clap;
-extern crate rdkafka;
-
 use clap::{App, Arg};
 
 use rdkafka::config::ClientConfig;

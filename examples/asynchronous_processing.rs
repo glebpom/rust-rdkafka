@@ -12,7 +12,7 @@ use rdkafka::async_support::*;
 use std::thread;
 use std::time::Duration;
 
-use tokio_executor::blocking::{run as block_on};
+use tokio::task;
 
 mod example_utils;
 use example_utils::setup_logger;
@@ -78,7 +78,7 @@ async fn run_async_processor(brokers: &str, group_id: &str, input_topic: &str, o
             let producer = producer.clone();
             let message_future = async move {
                 // The body of this closure will be executed in the thread pool.
-                let computation_result = block_on(move || expensive_computation(owned_message)).await;
+                let computation_result = task::spawn_blocking(move || expensive_computation(owned_message)).await.unwrap();
                 let producer_future = producer.send(
                     FutureRecord::to(&output_topic)
                         .key("some key")

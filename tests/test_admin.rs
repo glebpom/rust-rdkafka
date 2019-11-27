@@ -345,7 +345,7 @@ async fn test_configs() {
         };
         if entry != Some(&expected_entry) {
             let next_backoff = backoff.next_backoff().expect(&format!("{:?} != {:?}", entry, Some(&expected_entry)));
-            tokio::timer::delay_for(next_backoff).await;
+            tokio::time::delay_for(next_backoff).await;
         }
         break
     }

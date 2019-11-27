@@ -16,7 +16,7 @@ use log::*;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio_executor::blocking::{run as block_on};
+use tokio::task;
 
 //
 // ********** FUTURE PRODUCER **********
@@ -226,7 +226,7 @@ impl<C: ClientContext + 'static> FutureProducer<C> {
                         } else {
                             debug!("Queue full, polling for 100ms before trying again");
                             let producer = Arc::clone(&self.producer);
-                            block_on(move || producer.poll(Duration::from_millis(100))).await;
+                            let _ = task::spawn_blocking(move || producer.poll(Duration::from_millis(100))).await;
                             ProducerPollResult::Produce(record)
                         }
                     } else {
@@ -288,7 +288,7 @@ impl<C: ClientContext + 'static> FutureProducer<C> {
     /// Flushes the producer. Should be called before termination.
     pub async fn flush<T: Into<Option<Duration>> + Send + 'static>(&self, timeout: T) {
         let producer = Arc::clone(&self.producer);
-        block_on(move || producer.flush(timeout)).await
+        let _ = task::spawn_blocking(move || producer.flush(timeout)).await;
     }
 
     /// Returns the number of messages waiting to be sent, or send but not acknowledged yet.

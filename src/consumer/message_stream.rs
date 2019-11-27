@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
-use tokio_executor::blocking::{run as block_on, Blocking};
+use tokio::task;
 
 /// A small wrapper for a message pointer. This wrapper is only used to
 /// pass a message between the polling thread and the thread consuming the stream,
@@ -76,7 +76,7 @@ pub struct MessageStream<'a, C: ConsumerContext + 'static> {
     poll_interval_ms: i32,
     send_none: bool,
     #[pin]
-    pending: Option<Blocking<PollConsumerResult>>,
+    pending: Option<task::JoinHandle<PollConsumerResult>>,
     phantom: &'a std::marker::PhantomData<C>,
 }
 
@@ -115,7 +115,7 @@ impl<'a, C: ConsumerContext + 'a> Stream for MessageStream<'a, C> {
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
-        let mut pending: Pin<&mut Option<Blocking<PollConsumerResult>>> = this.pending.as_mut();
+        let mut pending: Pin<&mut Option<task::JoinHandle<PollConsumerResult>>> = this.pending.as_mut();
         debug!("Polling stream for next message");
         loop {
             if this.should_stop.load(Ordering::Relaxed) {
@@ -124,7 +124,7 @@ impl<'a, C: ConsumerContext + 'a> Stream for MessageStream<'a, C> {
             } else {
                 if let Some(to_poll) = pending.as_mut().as_pin_mut() {
                     debug!("Seeing if poll result is ready");
-                    if let PollConsumerResult::Ready(res) = futures::ready!(to_poll.poll(cx)) {
+                    if let PollConsumerResult::Ready(res) = futures::ready!(to_poll.poll(cx)).expect("poll consumer error") {
                         debug!("Poll result ready");
                         pending.set(None);
                         let ret = match res {
@@ -141,7 +141,7 @@ impl<'a, C: ConsumerContext + 'a> Stream for MessageStream<'a, C> {
                 let consumer = Arc::clone(&this.consumer);
                 let poll_interval_ms = *this.poll_interval_ms;
                 let send_none = *this.send_none;
-                let f = block_on(move || {
+                let f = task::spawn_blocking(move || {
                     match consumer.poll_raw(poll_interval_ms) {
                         None => {
                             if send_none {

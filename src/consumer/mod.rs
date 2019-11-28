@@ -1,11 +1,9 @@
 //! Base trait and common functionality for all consumers.
 mod base_consumer;
-mod message_stream;
 mod stream_consumer;
 
 // Re-export
 pub use base_consumer::BaseConsumer;
-pub use message_stream::MessageStream;
 pub use stream_consumer::StreamConsumer;
 
 use crate::rdsys;

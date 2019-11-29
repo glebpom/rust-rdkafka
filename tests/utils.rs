@@ -146,8 +146,8 @@ where
 }
 
 lazy_static! {
-    static ref VALUES: Vec<String> = (0..100).map(|i| format!("Message {}", i)).collect();
-    static ref KEYS: Vec<String> = (0..100).map(|i| format!("Key {}", i)).collect();
+    static ref VALUES: Vec<String> = (0..300).map(|i| format!("Message {}", i)).collect();
+    static ref KEYS: Vec<String> = (0..300).map(|i| format!("Key {}", i)).collect();
 }
 
 pub fn value_fn(id: i32) -> &'static String {

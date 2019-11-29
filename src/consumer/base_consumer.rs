@@ -71,7 +71,7 @@ unsafe extern "C" fn native_message_queue_nonempty_cb<C: ConsumerContext>(
 
 /// Low level wrapper around the librdkafka consumer. This consumer requires to be periodically polled
 /// to make progress on rebalance, callbacks and to receive messages.
-#[derive(Clone)]
+//#[derive(Clone)] //TODO: commented on merge
 pub struct BaseConsumer<C: ConsumerContext = DefaultConsumerContext> {
     client: Client<C>,
     main_queue_min_poll_interval: Timeout,

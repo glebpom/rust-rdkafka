@@ -9,14 +9,13 @@ use rdkafka::topic_partition_list::{Offset, TopicPartitionList};
 use rdkafka::util::current_time_millis;
 
 mod utils;
-use utils::*;
+use crate::utils::*;
 
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
 
 struct TestContext {
     _n: i64, // Add data for memory access validation
@@ -160,12 +159,12 @@ async fn test_produce_consume_base() {
 }
 
 // Seeking should allow replaying messages and skipping messages.
-#[test]
-fn test_produce_consume_seek() {
+#[tokio::test]
+async fn test_produce_consume_seek() {
     let _r = env_logger::try_init();
 
     let topic_name = rand_test_topic();
-    populate_topic(&topic_name, 5, &value_fn, &key_fn, Some(0), None);
+    populate_topic(&topic_name, 5, &value_fn, &key_fn, Some(0), None).await;
     let consumer = create_base_consumer(&rand_test_group(), None);
     consumer.subscribe(&[topic_name.as_str()]).unwrap();
 
@@ -420,8 +419,8 @@ fn ensure_empty<C: ConsumerContext>(consumer: &BaseConsumer<C>, err_msg: &str) {
     }
 }
 
-#[test]
-fn test_pause_resume_consumer_iter() {
+#[tokio::test]
+async fn test_pause_resume_consumer_iter() {
     const PAUSE_COUNT: i32 = 3;
     const MESSAGE_COUNT: i32 = 300;
     const MESSAGES_PER_PAUSE: i32 = MESSAGE_COUNT / PAUSE_COUNT;
@@ -436,7 +435,7 @@ fn test_pause_resume_consumer_iter() {
         &key_fn,
         Some(0),
         None,
-    );
+    ).await;
     let group_id = rand_test_group();
     let consumer = create_base_consumer(&group_id, None);
     consumer.subscribe(&[topic_name.as_str()]).unwrap();
@@ -465,8 +464,8 @@ fn test_pause_resume_consumer_iter() {
 }
 
 // All produced messages should be consumed.
-#[test]
-fn test_produce_consume_message_queue_nonempty_callback() {
+#[tokio::test]
+async fn test_produce_consume_message_queue_nonempty_callback() {
     let _r = env_logger::try_init();
 
     let topic_name = rand_test_topic();
@@ -511,7 +510,7 @@ fn test_produce_consume_message_queue_nonempty_callback() {
     assert!(consumer.poll(Duration::from_secs(0)).is_none());
 
     // Populate the topic, and expect a wakeup notifying us of the new messages.
-    populate_topic(&topic_name, 2, &value_fn, &key_fn, None, None);
+    populate_topic(&topic_name, 2, &value_fn, &key_fn, None, None).await;
     wait_for_wakeups(2);
 
     // Read one of the messages.
@@ -519,7 +518,7 @@ fn test_produce_consume_message_queue_nonempty_callback() {
 
     // Add more messages to the topic. Expect no additional wakeups, as the
     // queue is not fully drained, for 1s.
-    populate_topic(&topic_name, 2, &value_fn, &key_fn, None, None);
+    populate_topic(&topic_name, 2, &value_fn, &key_fn, None, None).await;
     std::thread::sleep(Duration::from_secs(1));
     assert_eq!(wakeups.load(Ordering::SeqCst), 2);
 
@@ -531,6 +530,6 @@ fn test_produce_consume_message_queue_nonempty_callback() {
     assert_eq!(wakeups.load(Ordering::SeqCst), 2);
 
     // Add another message, and expect a wakeup.
-    populate_topic(&topic_name, 1, &value_fn, &key_fn, None, None);
+    populate_topic(&topic_name, 1, &value_fn, &key_fn, None, None).await;
     wait_for_wakeups(3);
 }

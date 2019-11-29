@@ -78,7 +78,7 @@ unsafe impl Send for PolledMessagePtr {}
 pub struct MessageStream<'a, C: ConsumerContext + 'static> {
     consumer: Arc<BaseConsumer<C>>,
     should_stop: Arc<AtomicBool>,
-    poll_interval_ms: i32,
+    poll_interval: Timeout,
     send_none: bool,
     #[pin]
     pending: Option<task::JoinHandle<PollConsumerResult>>,
@@ -98,11 +98,10 @@ impl<'a, C: ConsumerContext + 'static> MessageStream<'a, C> {
         poll_interval: Duration,
         send_none: bool,
     ) -> Self {
-        let poll_interval_ms = duration_to_millis(poll_interval) as i32;
         Self {
             consumer: consumer,
             should_stop: should_stop,
-            poll_interval_ms: poll_interval_ms,
+            poll_interval: Timeout::After(poll_interval),
             send_none: send_none,
             pending: None,
             phantom: &std::marker::PhantomData,
@@ -144,10 +143,10 @@ impl<'a, C: ConsumerContext + 'a> Stream for MessageStream<'a, C> {
                 }
                 debug!("Requesting next poll result");
                 let consumer = Arc::clone(&this.consumer);
-                let poll_interval_ms = *this.poll_interval_ms;
+                let poll_interval = *this.poll_interval;
                 let send_none = *this.send_none;
                 let f = task::spawn_blocking(move || {
-                    match consumer.poll_raw(poll_interval_ms) {
+                    match consumer.poll_raw(poll_interval) {
                         None => {
                             if send_none {
                                 PollConsumerResult::Ready(None)

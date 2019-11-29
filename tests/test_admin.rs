@@ -75,7 +75,7 @@ async fn test_topics() {
     let _ = env_logger::try_init();
 
     let admin_client = create_admin_client();
-    let opts = AdminOptions::new().operation_timeout(Duration::from_secs(1));
+    let opts = AdminOptions::new().operation_timeout(Some(Duration::from_secs(1)));
 
     // Verify that topics are created as specified, and that they can later
     // be deleted.
@@ -373,7 +373,7 @@ async fn test_event_errors() {
         .set("bootstrap.servers", "noexist")
         .create::<AdminClient<DefaultClientContext>>()
         .expect("admin client creation failed");
-    let opts = AdminOptions::new().request_timeout(Duration::from_nanos(1));
+    let opts = AdminOptions::new().request_timeout(Some(Duration::from_nanos(1)));
 
     let res = admin_client.create_topics(&[], &opts).await;
     assert_eq!(res, Err(KafkaError::AdminOp(RDKafkaError::OperationTimedOut)));

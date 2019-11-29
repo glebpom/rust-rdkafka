@@ -10,7 +10,7 @@ use crate::rdsys::types::*;
 use crate::client::{Client, ClientContext, DefaultClientContext, NativeQueue};
 use crate::config::{ClientConfig, FromClientConfig, FromClientConfigAndContext};
 use crate::error::{IsError, KafkaError, KafkaResult};
-use crate::util::{cstr_to_owned, timeout_to_ms, AsCArray, ErrBuf, IntoOpaque, WrappedCPointer};
+use crate::util::{cstr_to_owned, AsCArray, ErrBuf, IntoOpaque, Timeout, WrappedCPointer};
 
 use futures::channel::oneshot::{Canceled, Receiver, Sender, channel};
 use futures::future::{self, Either, Future, FutureExt};
@@ -396,8 +396,8 @@ unsafe impl Send for NativeEvent {}
 
 /// Options for an admin API request.
 pub struct AdminOptions {
-    request_timeout: Option<Duration>,
-    operation_timeout: Option<Duration>,
+    request_timeout: Option<Timeout>,
+    operation_timeout: Option<Timeout>,
     validate_only: bool,
     broker_id: Option<i32>,
 }
@@ -417,8 +417,8 @@ impl AdminOptions {
     /// transmission, operation time on broker, and response.
     ///
     /// Defaults to the `socket.timeout.ms` configuration parameter.
-    pub fn request_timeout<T: Into<Option<Duration>>>(mut self, timeout: T) -> Self {
-        self.request_timeout = timeout.into();
+    pub fn request_timeout<T: Into<Timeout>>(mut self, timeout: Option<T>) -> Self {
+        self.request_timeout = timeout.map(Into::into);
         self
     }
 
@@ -431,8 +431,8 @@ impl AdminOptions {
     ///
     /// Only the CreateTopics, DeleteTopics, and CreatePartitions API calls
     /// respect this option.
-    pub fn operation_timeout<T: Into<Option<Duration>>>(mut self, timeout: T) -> Self {
-        self.operation_timeout = timeout.into();
+    pub fn operation_timeout<T: Into<Timeout>>(mut self, timeout: Option<T>) -> Self {
+        self.operation_timeout = timeout.map(Into::into);
         self
     }
 
@@ -470,7 +470,7 @@ impl AdminOptions {
             let res = unsafe {
                 rdsys::rd_kafka_AdminOptions_set_request_timeout(
                     native_opts.ptr(),
-                    timeout_to_ms(timeout),
+                    timeout.as_millis(),
                     err_buf.as_mut_ptr(),
                     err_buf.len(),
                 )
@@ -482,7 +482,7 @@ impl AdminOptions {
             let res = unsafe {
                 rdsys::rd_kafka_AdminOptions_set_operation_timeout(
                     native_opts.ptr(),
-                    timeout_to_ms(timeout),
+                    timeout.as_millis(),
                     err_buf.as_mut_ptr(),
                     err_buf.len(),
                 )

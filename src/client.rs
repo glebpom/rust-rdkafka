@@ -10,7 +10,6 @@ use std::os::raw::c_void;
 use std::ptr;
 use std::slice;
 use std::string::ToString;
-use std::time::Duration;
 
 use serde_json;
 
@@ -19,7 +18,7 @@ use crate::error::{IsError, KafkaError, KafkaResult};
 use crate::groups::GroupList;
 use crate::metadata::Metadata;
 use crate::statistics::Statistics;
-use crate::util::{timeout_to_ms, ErrBuf};
+use crate::util::{ErrBuf, Timeout};
 
 /// Client-level context
 ///
@@ -175,7 +174,7 @@ impl<C: ClientContext> Client<C> {
 
     /// Returns the metadata information for the specified topic, or for all topics in the cluster
     /// if no topic is specified.
-    pub fn fetch_metadata<T: Into<Option<Duration>>>(
+    pub fn fetch_metadata<T: Into<Timeout>>(
         &self,
         topic: Option<&str>,
         timeout: T,
@@ -195,7 +194,7 @@ impl<C: ClientContext> Client<C> {
                     .map(|t| t.ptr())
                     .unwrap_or_else(NativeTopic::null),
                 &mut metadata_ptr as *mut *const RDKafkaMetadata,
-                timeout_to_ms(timeout),
+                timeout.into().as_millis(),
             )
         };
         trace!("Metadata fetch completed");
@@ -207,7 +206,7 @@ impl<C: ClientContext> Client<C> {
     }
 
     /// Returns high and low watermark for the specified topic and partition.
-    pub fn fetch_watermarks<T: Into<Option<Duration>>>(
+    pub fn fetch_watermarks<T: Into<Timeout>>(
         &self,
         topic: &str,
         partition: i32,
@@ -223,7 +222,7 @@ impl<C: ClientContext> Client<C> {
                 partition,
                 &mut low as *mut i64,
                 &mut high as *mut i64,
-                timeout_to_ms(timeout),
+                timeout.into().as_millis(),
             )
         };
         if ret.is_error() {
@@ -234,7 +233,7 @@ impl<C: ClientContext> Client<C> {
 
     /// Returns the group membership information for the given group. If no group is
     /// specified, all groups will be returned.
-    pub fn fetch_group_list<T: Into<Option<Duration>>>(
+    pub fn fetch_group_list<T: Into<Timeout>>(
         &self,
         group: Option<&str>,
         timeout: T,
@@ -253,7 +252,7 @@ impl<C: ClientContext> Client<C> {
                 self.native_ptr(),
                 group_c_ptr,
                 &mut group_list_ptr as *mut *const RDKafkaGroupList,
-                timeout_to_ms(timeout),
+                timeout.into().as_millis(),
             )
         };
         trace!("Group list fetch completed");
@@ -266,7 +265,7 @@ impl<C: ClientContext> Client<C> {
 
     /// Returns a NativeTopic from the current client. The NativeTopic shouldn't outlive the client
     /// it was generated from.
-    fn native_topic(&self, topic: &str) -> KafkaResult<NativeTopic> {
+    pub(crate) fn native_topic(&self, topic: &str) -> KafkaResult<NativeTopic> {
         let topic_c = CString::new(topic.to_string())?;
         Ok(unsafe {
             NativeTopic::from_ptr(rdsys::rd_kafka_topic_new(
@@ -282,9 +281,20 @@ impl<C: ClientContext> Client<C> {
     pub(crate) fn new_native_queue(&self) -> NativeQueue {
         unsafe { NativeQueue::from_ptr(rdsys::rd_kafka_queue_new(self.native_ptr())) }
     }
+
+    pub(crate) fn consumer_queue(&self) -> Option<NativeQueue> {
+        unsafe {
+            let ptr = rdsys::rd_kafka_queue_get_consumer(self.native_ptr());
+            if ptr.is_null() {
+                None
+            } else {
+                Some(NativeQueue::from_ptr(ptr))
+            }
+        }
+    }
 }
 
-struct NativeTopic {
+pub(crate) struct NativeTopic {
     ptr: *mut RDKafkaTopic,
 }
 
@@ -298,7 +308,7 @@ impl NativeTopic {
     }
 
     /// Returns the pointer to the librdkafka RDKafkaTopic structure.
-    fn ptr(&self) -> *mut RDKafkaTopic {
+    pub fn ptr(&self) -> *mut RDKafkaTopic {
         self.ptr
     }
 
@@ -338,8 +348,8 @@ impl NativeQueue {
         self.ptr
     }
 
-    pub fn poll<T: Into<Option<Duration>>>(&self, t: T) -> *mut RDKafkaEvent {
-        unsafe { rdsys::rd_kafka_queue_poll(self.ptr, timeout_to_ms(t)) }
+    pub fn poll<T: Into<Timeout>>(&self, t: T) -> *mut RDKafkaEvent {
+        unsafe { rdsys::rd_kafka_queue_poll(self.ptr, t.into().as_millis()) }
     }
 }
 

@@ -13,9 +13,14 @@ use utils::*;
 
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 struct TestContext {
     _n: i64, // Add data for memory access validation
+    wakeups: Arc<AtomicUsize>,
 }
 
 impl ClientContext for TestContext {
@@ -29,6 +34,10 @@ impl ClientContext for TestContext {
 impl ConsumerContext for TestContext {
     fn commit_callback(&self, result: KafkaResult<()>, _offsets: *mut rdkafka_sys::RDKafkaTopicPartitionList) {
         println!("Committing offsets: {:?}", result);
+    }
+
+    fn message_queue_nonempty_callback(&self) {
+        self.wakeups.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -60,7 +69,10 @@ fn create_stream_consumer(
     group_id: &str,
     config_overrides: Option<HashMap<&str, &str>>,
 ) -> StreamConsumer<TestContext> {
-    let cons_context = TestContext { _n: 64 };
+    let cons_context = TestContext {
+        _n: 64,
+        wakeups: Arc::new(AtomicUsize::new(0)),
+    };
     create_stream_consumer_with_context(group_id, config_overrides, cons_context)
 }
 
@@ -79,7 +91,10 @@ fn create_base_consumer(
     config_overrides: Option<HashMap<&str, &str>>
 ) -> BaseConsumer<TestContext> {
     consumer_config(group_id, config_overrides)
-        .create_with_context(TestContext { _n: 64 })
+        .create_with_context(TestContext {
+            _n: 64,
+            wakeups: Arc::new(AtomicUsize::new(0)),
+        })
         .expect("Consumer creation failed")
 }
 
@@ -142,6 +157,39 @@ async fn test_produce_consume_base() {
         }).await;
 
     consumer.stop();
+}
+
+// Seeking should allow replaying messages and skipping messages.
+#[test]
+fn test_produce_consume_seek() {
+    let _r = env_logger::try_init();
+
+    let topic_name = rand_test_topic();
+    populate_topic(&topic_name, 5, &value_fn, &key_fn, Some(0), None);
+    let consumer = create_base_consumer(&rand_test_group(), None);
+    consumer.subscribe(&[topic_name.as_str()]).unwrap();
+
+    for (i, message) in consumer.iter().take(3).enumerate() {
+        match message {
+            Ok(message) => assert_eq!(dbg!(message.offset()), i as i64),
+            Err(e) => panic!("Error receiving message: {:?}", e),
+        }
+    }
+
+    consumer
+        .seek(&topic_name, 0, Offset::Offset(1), None)
+        .unwrap();
+
+    for (i, message) in consumer.iter().take(3).enumerate() {
+        match message {
+            Ok(message) => assert_eq!(message.offset(), i as i64 + 1),
+            Err(e) => panic!("Error receiving message: {:?}", e),
+        }
+    }
+
+    consumer.seek(&topic_name, 0, Offset::End, None).unwrap();
+
+    ensure_empty(&consumer, "There should be no messages left");
 }
 
 // All produced messages should be consumed.
@@ -362,4 +410,127 @@ async fn test_consumer_store_offset_commit() {
     assert_eq!(position, consumer.position().unwrap());
 
     consumer.stop();
+}
+
+fn ensure_empty<C: ConsumerContext>(consumer: &BaseConsumer<C>, err_msg: &str) {
+    const MAX_TRY_TIME: Duration = Duration::from_secs(2);
+    let start = Instant::now();
+    while start.elapsed() < MAX_TRY_TIME {
+        assert!(consumer.poll(MAX_TRY_TIME).is_none(), "{}", err_msg);
+    }
+}
+
+#[test]
+fn test_pause_resume_consumer_iter() {
+    const PAUSE_COUNT: i32 = 3;
+    const MESSAGE_COUNT: i32 = 300;
+    const MESSAGES_PER_PAUSE: i32 = MESSAGE_COUNT / PAUSE_COUNT;
+
+    let _r = env_logger::try_init();
+
+    let topic_name = rand_test_topic();
+    populate_topic(
+        &topic_name,
+        MESSAGE_COUNT,
+        &value_fn,
+        &key_fn,
+        Some(0),
+        None,
+    );
+    let group_id = rand_test_group();
+    let consumer = create_base_consumer(&group_id, None);
+    consumer.subscribe(&[topic_name.as_str()]).unwrap();
+
+    for _ in 0..PAUSE_COUNT {
+        let mut num_taken = 0;
+        for message in consumer.iter().take(MESSAGES_PER_PAUSE as usize) {
+            message.unwrap();
+            num_taken += 1;
+        }
+        assert_eq!(num_taken, MESSAGES_PER_PAUSE);
+
+        let partitions = consumer.assignment().unwrap();
+        assert!(partitions.count() > 0);
+        consumer.pause(&partitions).unwrap();
+
+        ensure_empty(
+            &consumer,
+            "Partition is paused - we should not receive anything",
+        );
+
+        consumer.resume(&partitions).unwrap();
+    }
+
+    ensure_empty(&consumer, "There should be no messages left");
+}
+
+// All produced messages should be consumed.
+#[test]
+fn test_produce_consume_message_queue_nonempty_callback() {
+    let _r = env_logger::try_init();
+
+    let topic_name = rand_test_topic();
+
+    let consumer: BaseConsumer<_> = consumer_config(&rand_test_group(), None)
+        .create_with_context(TestContext {
+            _n: 64,
+            wakeups: Arc::new(AtomicUsize::new(0)),
+        })
+        .expect("Consumer creation failed");
+    consumer.subscribe(&[topic_name.as_str()]).unwrap();
+
+    let wakeups = consumer.context().wakeups.clone();
+    let wait_for_wakeups = |target| {
+        let start = Instant::now();
+        let timeout = Duration::from_secs(15);
+        loop {
+            let w = wakeups.load(Ordering::SeqCst);
+            if w == target {
+                break;
+            } else if w > target {
+                panic!("wakeups {} exceeds target {}", w, target);
+            }
+            thread::sleep(Duration::from_millis(100));
+            if start.elapsed() > timeout {
+                panic!("timeout exceeded while waiting for wakeup");
+            }
+        }
+    };
+
+    // Initiate connection.
+    assert!(consumer.poll(Duration::from_secs(0)).is_none());
+
+    // Expect one initial rebalance callback.
+    wait_for_wakeups(1);
+
+    // Expect no additional wakeups for 1s.
+    std::thread::sleep(Duration::from_secs(1));
+    assert_eq!(wakeups.load(Ordering::SeqCst), 1);
+
+    // Verify there are no messages waiting.
+    assert!(consumer.poll(Duration::from_secs(0)).is_none());
+
+    // Populate the topic, and expect a wakeup notifying us of the new messages.
+    populate_topic(&topic_name, 2, &value_fn, &key_fn, None, None);
+    wait_for_wakeups(2);
+
+    // Read one of the messages.
+    assert!(consumer.poll(Duration::from_secs(0)).is_some());
+
+    // Add more messages to the topic. Expect no additional wakeups, as the
+    // queue is not fully drained, for 1s.
+    populate_topic(&topic_name, 2, &value_fn, &key_fn, None, None);
+    std::thread::sleep(Duration::from_secs(1));
+    assert_eq!(wakeups.load(Ordering::SeqCst), 2);
+
+    // Drain the consumer.
+    assert_eq!(consumer.iter().take(3).count(), 3);
+
+    // Expect no additional wakeups for 1s.
+    std::thread::sleep(Duration::from_secs(1));
+    assert_eq!(wakeups.load(Ordering::SeqCst), 2);
+
+    // Add another message, and expect a wakeup.
+    populate_topic(&topic_name, 1, &value_fn, &key_fn, None, None);
+    wait_for_wakeups(3);
 }

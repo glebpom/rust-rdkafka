@@ -54,7 +54,6 @@ async fn run_async_processor(brokers: &str, group_id: &str, input_topic: &str, o
     // Create the `FutureProducer` to produce asynchronously.
     let producer: FutureProducer = ClientConfig::new()
         .set("bootstrap.servers", brokers)
-        .set("produce.offset.report", "true")
         .set("message.timeout.ms", "5000")
         .create()
         .expect("Producer creation error");

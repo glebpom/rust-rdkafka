@@ -21,7 +21,7 @@ use crate::error::KafkaResult;
 use crate::message::BorrowedMessage;
 use crate::rdsys;
 use crate::rdsys::types::*;
-use crate::util::duration_to_millis;
+use crate::util::Timeout;
 
 /// A small wrapper for a message pointer. This wrapper is only used to
 /// pass a message between the polling thread and the thread consuming the stream,
@@ -165,6 +165,8 @@ impl<'a, C: ConsumerContext + 'a> Stream for MessageStream<'a, C> {
         }
     }
 }
+
+
 
 /// A Kafka Consumer providing a `futures::Stream` interface.
 ///

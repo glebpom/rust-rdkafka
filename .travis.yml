@@ -13,7 +13,6 @@ jobs:
     rust: nightly-2019-10-17
     env:
       - "RDKAFKA_RUN_TESTS=1"
-      - "RUST_BACKTRACE=1"
   - os: linux
     arch: arm64
     rust: stable
@@ -23,10 +22,10 @@ jobs:
 script:
   - if [[ "$RDKAFKA_RUN_TESTS" ]]; then ./test_suite.sh; else cargo build --verbose; fi
 
-notifications:
-  webhooks:
-    urls:
-      - https://webhooks.gitter.im/e/2826b9d85e25802b3907  # gitter
-    on_success: change
-    on_failure: always
-    on_start: never
+# notifications:
+#   webhooks:
+#     urls:
+#       - https://webhooks.gitter.im/e/2826b9d85e25802b3907  # gitter
+#     on_success: change
+#     on_failure: always
+#     on_start: never

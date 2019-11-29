@@ -13,6 +13,7 @@ services:
     command: ./run_tests.sh
     environment:
       - KAFKA_VERSION=2.2.0
+      - RUST_BACKTRACE=1
 
   kafka:
     image: confluentinc/cp-kafka:5.2.1

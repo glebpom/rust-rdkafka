@@ -120,20 +120,20 @@ impl<'a, C: ConsumerContext + 'a> Stream for MessageStream<'a, C> {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
         let mut pending: Pin<&mut Option<task::JoinHandle<PollConsumerResult>>> = this.pending.as_mut();
-        debug!("Polling stream for next message");
+        println!("Polling stream for next message");
         loop {
             if this.should_stop.load(Ordering::Relaxed) {
-                info!("Stopping");
+                println!("Stopping");
                 return Poll::Ready(None);
             } else {
                 if let Some(to_poll) = pending.as_mut().as_pin_mut() {
-                    debug!("Seeing if poll result is ready");
+                    println!("Seeing if poll result is ready");
                     if let PollConsumerResult::Ready(res) = futures::ready!(to_poll.poll(cx)).expect("poll consumer error") {
-                        debug!("Poll result ready");
+                        println!("Poll result ready");
                         pending.set(None);
                         let ret = match res {
                             None => {
-                                debug!("No message polled, but forwarding none as requested");
+                                println!("No message polled, but forwarding none as requested");
                                 Poll::Ready(Some(Err(KafkaError::NoMessageReceived)))
                             },
                             Some(polled_ptr) => Poll::Ready(Some(polled_ptr.into_message())),
@@ -141,7 +141,7 @@ impl<'a, C: ConsumerContext + 'a> Stream for MessageStream<'a, C> {
                         return ret;
                     }
                 }
-                debug!("Requesting next poll result");
+                println!("Requesting next poll result");
                 let consumer = Arc::clone(&this.consumer);
                 let poll_interval = *this.poll_interval;
                 let send_none = *this.send_none;

@@ -134,7 +134,7 @@ where
     for (id, f) in results {
         match f.await {
             Ok(Ok((partition, offset))) => {
-                debug!("Successfully produced record {} to partition {} with offset {}", id, partition, offset);
+                println!("Successfully produced record {} to partition {} with offset {}", id, partition, offset);
                 message_map.insert((partition, offset), id)
             },
             Ok(Err((kafka_error, _message))) => panic!("Delivery failed for record {}: {}", id, kafka_error),

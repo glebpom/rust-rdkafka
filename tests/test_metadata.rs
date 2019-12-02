@@ -83,7 +83,12 @@ async fn test_subscription() {
     let consumer = create_consumer(&rand_test_group());
     consumer.subscribe(&[topic_name.as_str()]).unwrap();
 
-    let _consumer_future = consumer.start().take(10).collect::<Vec<_>>().await;
+    println!("subscribed, start consuming...");
+    let _consumer_future = consumer.start().take(10).map(|r| {
+        println!("read in consumer");
+        r
+    }).collect::<Vec<_>>().await;
+    println!("Consumer finished");
 
     let mut tpl = TopicPartitionList::new();
     tpl.add_topic_unassigned(&topic_name);

@@ -313,19 +313,16 @@ async fn test_consumer_commit_message() {
     let consumer = create_stream_consumer(&rand_test_group(), None);
     consumer.subscribe(&[topic_name.as_str()]).unwrap();
 
-    let _consumer_future = consumer.start()
-        .take(33)
-        .for_each(|message| {
-            match message {
-                Ok(m) => {
-                    if m.partition() == 1 {
-                        consumer.commit_message(&m, CommitMode::Async).unwrap();
-                    }
-                },
-                Err(e) => panic!("error receiving message: {:?}", e)
-            };
-            futures::future::ready(())
-        });
+    while let Some(message) = consumer.start().take(33).next().await {
+        match message {
+            Ok(m) => {
+                if m.partition() == 1 {
+                    consumer.commit_message(&m, CommitMode::Async).unwrap();
+                }
+            },
+            Err(e) => panic!("error receiving message: {:?}", e)
+        }
+    };
 
     let timeout = Duration::from_secs(5);
     assert_eq!(consumer.fetch_watermarks(&topic_name, 0, timeout).unwrap(), (0, 10));

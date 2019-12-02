@@ -313,7 +313,9 @@ async fn test_consumer_commit_message() {
     let consumer = create_stream_consumer(&rand_test_group(), None);
     consumer.subscribe(&[topic_name.as_str()]).unwrap();
 
-    while let Some(message) = consumer.start().take(33).next().await {
+    let mut s = consumer.start().take(33);
+
+    while let Some(message) = s.next().await {
         match message {
             Ok(m) => {
                 if m.partition() == 1 {
